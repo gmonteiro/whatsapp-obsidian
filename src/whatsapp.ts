@@ -47,22 +47,18 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
     } catch {}
   });
 
+  // Listen to ALL events to debug
+  client.on("message", async (msg: any) => {
+    console.log(`[WhatsApp] EVENT:message from=${msg.from} to=${msg.to} fromMe=${msg.fromMe} body=${msg.body?.slice(0, 50)}`);
+  });
+
   client.on("message_create", async (msg: any) => {
+    console.log(`[WhatsApp] EVENT:message_create from=${msg.from} to=${msg.to} fromMe=${msg.fromMe} body=${msg.body?.slice(0, 50)}`);
+
     if (!msg.fromMe) return;
 
     const text = msg.body;
     if (!text) return;
-
-    // Accept: self-chat (from===to), LID destination, or to contains own number
-    const toUser = msg.to?.split("@")[0]?.split(":")[0];
-    const isSelfChat =
-      msg.from === msg.to ||
-      msg.to?.endsWith("@lid") && toUser && myNumber && toUser === myNumber ||
-      !msg.to;
-
-    console.log(`[WhatsApp] msg from=${msg.from} to=${msg.to} isSelf=${isSelfChat}`);
-
-    if (!isSelfChat) return;
 
     console.log(`[WhatsApp] Mensagem recebida: ${text.slice(0, 100)}...`);
 
