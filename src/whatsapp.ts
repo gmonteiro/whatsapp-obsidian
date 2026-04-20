@@ -35,20 +35,14 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
     console.log(`[WhatsApp] Desconectado: ${reason}`);
   });
 
-  // Resolve own LID on ready
-  let myLid: string | null = null;
+  // Log own info on ready
+  let myNumber: string | null = null;
   client.on("ready", async () => {
     try {
       const me = client.info?.wid;
       if (me) {
-        // Get the "Message yourself" chat to find the LID
-        const chats = await client.getChats();
-        const selfChat = chats.find((c: any) => c.id?.user === me.user && !c.isGroup);
-        if (selfChat) {
-          myLid = selfChat.id._serialized;
-          console.log(`[WhatsApp] Self-chat LID: ${myLid}`);
-        }
-        console.log(`[WhatsApp] Meu JID: ${me._serialized}`);
+        myNumber = me.user;
+        console.log(`[WhatsApp] Meu número: ${myNumber}`);
       }
     } catch {}
   });
@@ -59,8 +53,15 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
     const text = msg.body;
     if (!text) return;
 
-    // Only accept messages to self: from === to, or to matches our LID
-    const isSelfChat = msg.from === msg.to || (myLid && msg.to === myLid);
+    // Accept: self-chat (from===to), LID destination, or to contains own number
+    const toUser = msg.to?.split("@")[0]?.split(":")[0];
+    const isSelfChat =
+      msg.from === msg.to ||
+      msg.to?.endsWith("@lid") && toUser && myNumber && toUser === myNumber ||
+      !msg.to;
+
+    console.log(`[WhatsApp] msg from=${msg.from} to=${msg.to} isSelf=${isSelfChat}`);
+
     if (!isSelfChat) return;
 
     console.log(`[WhatsApp] Mensagem recebida: ${text.slice(0, 100)}...`);
