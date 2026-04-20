@@ -11,23 +11,47 @@ const execAsync = promisify(exec);
 export async function setupVault(): Promise<void> {
   const vaultPath = config.obsidianVaultPath;
   const vaultRepo = process.env.VAULT_REPO;
+  const ghToken = process.env.GITHUB_TOKEN;
 
-  if (!config.gitPush || !vaultRepo) return;
+  if (!config.gitPush || !vaultRepo) {
+    console.log("[Vault] GIT_PUSH desabilitado ou VAULT_REPO não configurado, salvando localmente.");
+    await fs.mkdir(vaultPath, { recursive: true });
+    return;
+  }
+
+  // Inject token into repo URL for auth: https://TOKEN@github.com/user/repo.git
+  let authRepo = vaultRepo;
+  if (ghToken && vaultRepo.startsWith("https://")) {
+    authRepo = vaultRepo.replace("https://", `https://${ghToken}@`);
+  }
 
   try {
     await fs.access(path.join(vaultPath, ".git"));
     console.log("[Vault] Repo já existe, fazendo pull...");
-    await execAsync("git pull --rebase", { cwd: vaultPath });
+    try {
+      await execAsync("git pull --rebase", { cwd: vaultPath });
+    } catch (err) {
+      console.error("[Vault] Pull falhou, continuando:", err);
+    }
   } catch {
-    console.log(`[Vault] Clonando ${vaultRepo}...`);
-    await fs.mkdir(vaultPath, { recursive: true });
-    await execAsync(`git clone ${vaultRepo} "${vaultPath}"`);
+    console.log(`[Vault] Clonando vault repo...`);
+    try {
+      await fs.mkdir(path.dirname(vaultPath), { recursive: true });
+      await execAsync(`git clone ${authRepo} "${vaultPath}"`);
+    } catch (err) {
+      console.error("[Vault] Clone falhou, criando pasta local:", err);
+      await fs.mkdir(vaultPath, { recursive: true });
+    }
   }
 
   // Configure git identity
   const opts = { cwd: vaultPath };
-  await execAsync('git config user.email "bot@whatsapp-obsidian.local"', opts);
-  await execAsync('git config user.name "WhatsApp-Obsidian Bot"', opts);
+  try {
+    await execAsync('git config user.email "bot@whatsapp-obsidian.local"', opts);
+    await execAsync('git config user.name "WhatsApp-Obsidian Bot"', opts);
+    // Disable SSL verification for Railway environment
+    await execAsync("git config http.sslVerify false", opts);
+  } catch {}
   console.log("[Vault] Pronto para receber notas.");
 }
 
