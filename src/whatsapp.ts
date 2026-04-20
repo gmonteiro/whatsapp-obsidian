@@ -1,99 +1,77 @@
-import makeWASocket, {
-  useMultiFileAuthState,
-  DisconnectReason,
-  type WASocket,
-  type WAMessage,
-} from "@whiskeysockets/baileys";
-import { config } from "./config.js";
+import pkg from "whatsapp-web.js";
+const { Client, LocalAuth } = pkg;
 import { updateQR, updateStatus } from "./web.js";
 
 type MessageHandler = (text: string) => Promise<void>;
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
-  const { state, saveCreds } = await useMultiFileAuthState(config.authFolder);
+  const authPath = process.env.AUTH_PATH || "./auth";
+  const client = new Client({
+    authStrategy: new LocalAuth({ dataPath: authPath }),
+    puppeteer: {
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--single-process",
+      ],
+    },
+  });
 
-  let sock: WASocket;
+  client.on("qr", (qr: string) => {
+    updateQR(qr);
+    console.log("[WhatsApp] QR code gerado — escaneie pelo painel web");
+  });
 
-  async function connect() {
-    sock = makeWASocket({
-      auth: state,
-    });
+  client.on("ready", () => {
+    updateStatus("connected");
+    console.log("[WhatsApp] Conectado!");
+  });
 
-    sock.ev.on("creds.update", saveCreds);
+  client.on("disconnected", (reason: string) => {
+    updateStatus("disconnected");
+    console.log(`[WhatsApp] Desconectado: ${reason}`);
+  });
 
-    sock.ev.on("connection.update", async (update) => {
-      const { connection, lastDisconnect, qr } = update;
-
-      if (qr) {
-        updateQR(qr);
-        console.log("[WhatsApp] QR code gerado — escaneie pelo painel web");
-      }
-
-      if (connection === "close") {
-        updateStatus("disconnected");
-        const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-
-        if (shouldReconnect) {
-          console.log("[WhatsApp] Conexão perdida, reconectando em 5s...");
-          await sleep(5000);
-          connect();
-        } else {
-          console.log(
-            "[WhatsApp] Deslogado. Delete a pasta auth/ e reinicie para escanear QR novamente."
-          );
+  // Resolve own LID on ready
+  let myLid: string | null = null;
+  client.on("ready", async () => {
+    try {
+      const me = client.info?.wid;
+      if (me) {
+        // Get the "Message yourself" chat to find the LID
+        const chats = await client.getChats();
+        const selfChat = chats.find((c: any) => c.id?.user === me.user && !c.isGroup);
+        if (selfChat) {
+          myLid = selfChat.id._serialized;
+          console.log(`[WhatsApp] Self-chat LID: ${myLid}`);
         }
-      } else if (connection === "open") {
-        updateStatus("connected");
-        console.log("[WhatsApp] Conectado!");
+        console.log(`[WhatsApp] Meu JID: ${me._serialized}`);
       }
-    });
+    } catch {}
+  });
 
-    sock.ev.on("messages.upsert", async ({ messages, type }) => {
-      if (type !== "notify") return;
+  client.on("message_create", async (msg: any) => {
+    if (!msg.fromMe) return;
 
-      for (const msg of messages) {
-        if (!isOwnMessage(msg, sock)) continue;
+    const text = msg.body;
+    if (!text) return;
 
-        const text = extractText(msg);
-        if (!text) continue;
+    // Only accept messages to self: from === to, or to matches our LID
+    const isSelfChat = msg.from === msg.to || (myLid && msg.to === myLid);
+    if (!isSelfChat) return;
 
-        console.log(`[WhatsApp] Mensagem recebida: ${text.slice(0, 100)}...`);
+    console.log(`[WhatsApp] Mensagem recebida: ${text.slice(0, 100)}...`);
 
-        try {
-          await onMessage(text);
-        } catch (err) {
-          console.error("[WhatsApp] Erro processando mensagem:", err);
-        }
-      }
-    });
-  }
+    try {
+      await onMessage(text);
+    } catch (err) {
+      console.error("[WhatsApp] Erro processando mensagem:", err);
+    }
+  });
 
-  await connect();
-}
-
-function isOwnMessage(msg: WAMessage, sock: WASocket): boolean {
-  const jid = msg.key.remoteJid;
-  if (!jid) return false;
-
-  const myJid = sock.user?.id;
-  if (!myJid) return false;
-
-  const normalize = (j: string) => j.replace(/:.*@/, "@");
-  return normalize(jid) === normalize(myJid) && msg.key.fromMe === true;
-}
-
-function extractText(msg: WAMessage): string | null {
-  const m = msg.message;
-  if (!m) return null;
-
-  return (
-    m.conversation ??
-    m.extendedTextMessage?.text ??
-    null
-  );
+  console.log("[WhatsApp] Iniciando cliente...");
+  await client.initialize();
 }

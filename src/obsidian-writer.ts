@@ -8,6 +8,29 @@ import type { Summary } from "./summarizer.js";
 
 const execAsync = promisify(exec);
 
+export async function setupVault(): Promise<void> {
+  const vaultPath = config.obsidianVaultPath;
+  const vaultRepo = process.env.VAULT_REPO;
+
+  if (!config.gitPush || !vaultRepo) return;
+
+  try {
+    await fs.access(path.join(vaultPath, ".git"));
+    console.log("[Vault] Repo já existe, fazendo pull...");
+    await execAsync("git pull --rebase", { cwd: vaultPath });
+  } catch {
+    console.log(`[Vault] Clonando ${vaultRepo}...`);
+    await fs.mkdir(vaultPath, { recursive: true });
+    await execAsync(`git clone ${vaultRepo} "${vaultPath}"`);
+  }
+
+  // Configure git identity
+  const opts = { cwd: vaultPath };
+  await execAsync('git config user.email "bot@whatsapp-obsidian.local"', opts);
+  await execAsync('git config user.name "WhatsApp-Obsidian Bot"', opts);
+  console.log("[Vault] Pronto para receber notas.");
+}
+
 function slugify(text: string): string {
   return text
     .toLowerCase()
@@ -122,14 +145,22 @@ async function gitPush(filePath: string, commitMsg: string): Promise<void> {
   }
 }
 
+function getOutputDir(folder: string | null): string {
+  if (folder) {
+    return path.join(config.obsidianVaultPath, folder);
+  }
+  return getCapturesPath();
+}
+
 export async function writeLinkNote(
   content: ScrapedContent,
-  summary: Summary
+  summary: Summary,
+  folder: string | null = null
 ): Promise<string> {
   const date = new Date();
-  const slug = slugify(content.title);
-  const filename = `${formatDate(date)}-${slug}.md`;
-  const capturesDir = getCapturesPath();
+  const safeTitle = content.title.replace(/[<>:"/\\|?*]/g, "").trim();
+  const filename = `${safeTitle}.md`;
+  const capturesDir = getOutputDir(folder);
 
   await fs.mkdir(capturesDir, { recursive: true });
 
@@ -145,11 +176,10 @@ export async function writeLinkNote(
   return filePath;
 }
 
-export async function writeQuickNote(text: string): Promise<string> {
+export async function writeQuickNote(text: string, folder: string | null = null): Promise<string> {
   const date = new Date();
-  const timestamp = date.toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const filename = `${formatDate(date)}-nota-${timestamp}.md`;
-  const capturesDir = getCapturesPath();
+  const filename = `Nota rápida ${formatDateTime(date).replace(/:/g, "-")}.md`;
+  const capturesDir = getOutputDir(folder);
 
   await fs.mkdir(capturesDir, { recursive: true });
 

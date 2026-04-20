@@ -90,7 +90,97 @@ async function scrapeYouTube(url: string): Promise<ScrapedContent | null> {
   }
 }
 
+async function scrapeTwitter(url: string): Promise<ScrapedContent | null> {
+  // Extract tweet ID from various X/Twitter URL formats
+  const match = url.match(/(?:twitter\.com|x\.com)\/(\w+)\/status\/(\d+)/);
+  if (!match) return null;
+
+  const [, username, tweetId] = match;
+  const apiUrl = `https://api.fxtwitter.com/${username}/status/${tweetId}`;
+
+  try {
+    const res = await fetch(apiUrl, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    const data = (await res.json()) as any;
+    const tweet = data.tweet;
+    if (!tweet) return null;
+
+    const author = `${tweet.author?.name ?? username} (@${tweet.author?.screen_name ?? username})`;
+
+    // Handle long-form articles (Twitter Articles / Notes)
+    const article = tweet.article;
+    if (article?.content?.blocks) {
+      const blocks: string[] = [];
+      for (const block of article.content.blocks) {
+        const t = block.text ?? "";
+        if (!t.trim()) continue;
+        if (block.type === "atomic") continue;
+        // Apply bold inline styles
+        let line = t;
+        const bolds = (block.inlineStyleRanges ?? []).filter((s: any) => s.style === "Bold");
+        if (bolds.length > 0 && bolds[0].offset === 0 && bolds[0].length === t.length) {
+          line = `### ${t}`;
+        }
+        blocks.push(line);
+      }
+      const articleText = blocks.join("\n\n");
+      const title = article.title ?? `Artigo de ${tweet.author?.name ?? username}`;
+
+      return {
+        title,
+        author,
+        excerpt: article.preview_text ?? articleText.slice(0, 200),
+        contentMarkdown: [
+          `**${author}**`,
+          "",
+          articleText,
+          "",
+          "---",
+          `Likes: ${tweet.likes ?? 0} · Retweets: ${tweet.retweets ?? 0} · Replies: ${tweet.replies ?? 0}`,
+          `Data: ${tweet.created_at ?? ""}`,
+        ].join("\n"),
+        contentText: articleText,
+        url,
+      };
+    }
+
+    // Regular tweet
+    const text = tweet.text ?? "";
+    const media = (tweet.media?.all ?? [])
+      .map((m: any) => m.type === "photo" ? `![](${m.url})` : `[${m.type}](${m.url})`)
+      .join("\n");
+
+    const contentMarkdown = [
+      `**${author}**`,
+      "",
+      text,
+      media ? `\n${media}` : "",
+      "",
+      `---`,
+      `Likes: ${tweet.likes ?? 0} · Retweets: ${tweet.retweets ?? 0} · Replies: ${tweet.replies ?? 0}`,
+      `Data: ${tweet.created_at ?? ""}`,
+    ].filter(Boolean).join("\n");
+
+    return {
+      title: `Tweet de ${tweet.author?.name ?? username}`,
+      author,
+      excerpt: text.slice(0, 200),
+      contentMarkdown,
+      contentText: text,
+      url,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function scrape(url: string): Promise<ScrapedContent> {
+  // Twitter/X special handling
+  if (url.includes("twitter.com") || url.includes("x.com")) {
+    const tw = await scrapeTwitter(url);
+    if (tw) return tw;
+  }
+
   // YouTube special handling
   if (url.includes("youtube.com") || url.includes("youtu.be")) {
     const yt = await scrapeYouTube(url);

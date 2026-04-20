@@ -48,13 +48,18 @@ ${content.contentText.slice(0, 30000)}`;
     messages: [{ role: "user", content: userMessage }],
   });
 
-  const text =
+  let text =
     response.content[0].type === "text" ? response.content[0].text : "";
+
+  // Strip markdown code fences if present
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    text = fenceMatch[1].trim();
+  }
 
   try {
     return JSON.parse(text) as Summary;
   } catch {
-    // If JSON parsing fails, return a basic summary
     return {
       resumo: text.slice(0, 500),
       pontos_chave: [],
