@@ -9,6 +9,10 @@ import { updateQR, updateStatus } from "./web.js";
 
 type MessageHandler = (text: string) => Promise<void>;
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
   const { state, saveCreds } = await useMultiFileAuthState(config.authFolder);
 
@@ -17,17 +21,16 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
   async function connect() {
     sock = makeWASocket({
       auth: state,
-      printQRInTerminal: true,
     });
 
     sock.ev.on("creds.update", saveCreds);
 
-    sock.ev.on("connection.update", (update) => {
+    sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
         updateQR(qr);
-        console.log("[WhatsApp] QR code gerado — escaneie pelo painel web ou terminal");
+        console.log("[WhatsApp] QR code gerado — escaneie pelo painel web");
       }
 
       if (connection === "close") {
@@ -36,7 +39,8 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
         if (shouldReconnect) {
-          console.log("[WhatsApp] Conexão perdida, reconectando...");
+          console.log("[WhatsApp] Conexão perdida, reconectando em 5s...");
+          await sleep(5000);
           connect();
         } else {
           console.log(
@@ -76,11 +80,9 @@ function isOwnMessage(msg: WAMessage, sock: WASocket): boolean {
   const jid = msg.key.remoteJid;
   if (!jid) return false;
 
-  // "Message yourself" conversation: remoteJid equals own JID
   const myJid = sock.user?.id;
   if (!myJid) return false;
 
-  // Normalize JIDs (remove :device suffix)
   const normalize = (j: string) => j.replace(/:.*@/, "@");
   return normalize(jid) === normalize(myJid) && msg.key.fromMe === true;
 }
