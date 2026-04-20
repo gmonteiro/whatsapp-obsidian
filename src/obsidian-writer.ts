@@ -1,14 +1,18 @@
 import fs from "fs/promises";
 import path from "path";
-import { getCapturesPath } from "./config.js";
+import { exec } from "child_process";
+import { promisify } from "util";
+import { config, getCapturesPath } from "./config.js";
 import type { ScrapedContent } from "./scraper.js";
 import type { Summary } from "./summarizer.js";
+
+const execAsync = promisify(exec);
 
 function slugify(text: string): string {
   return text
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // remove accents
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80);
@@ -77,7 +81,6 @@ function buildLinkNote(
     }
   }
 
-  // Original content section
   sections.push(
     "",
     "---",
@@ -106,6 +109,19 @@ function buildQuickNote(text: string, date: Date): string {
   return `${frontmatter}\n\n${text}\n`;
 }
 
+async function gitPush(filePath: string, commitMsg: string): Promise<void> {
+  const vaultPath = config.obsidianVaultPath;
+  const opts = { cwd: vaultPath };
+  try {
+    await execAsync(`git add "${filePath}"`, opts);
+    await execAsync(`git commit -m "${commitMsg}"`, opts);
+    await execAsync("git push", opts);
+    console.log(`[Git] Pushed: ${commitMsg}`);
+  } catch (err) {
+    console.error("[Git] Push failed:", err);
+  }
+}
+
 export async function writeLinkNote(
   content: ScrapedContent,
   summary: Summary
@@ -121,6 +137,11 @@ export async function writeLinkNote(
   const markdown = buildLinkNote(content, summary, date);
 
   await fs.writeFile(filePath, markdown, "utf-8");
+
+  if (config.gitPush) {
+    await gitPush(filePath, `capture: ${content.title.slice(0, 60)}`);
+  }
+
   return filePath;
 }
 
@@ -136,5 +157,10 @@ export async function writeQuickNote(text: string): Promise<string> {
   const markdown = buildQuickNote(text, date);
 
   await fs.writeFile(filePath, markdown, "utf-8");
+
+  if (config.gitPush) {
+    await gitPush(filePath, `quick-note: ${formatDateTime(date)}`);
+  }
+
   return filePath;
 }

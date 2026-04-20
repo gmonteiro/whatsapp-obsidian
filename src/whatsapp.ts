@@ -5,6 +5,7 @@ import makeWASocket, {
   type WAMessage,
 } from "@whiskeysockets/baileys";
 import { config } from "./config.js";
+import { updateQR, updateStatus } from "./web.js";
 
 type MessageHandler = (text: string) => Promise<void>;
 
@@ -22,9 +23,15 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", (update) => {
-      const { connection, lastDisconnect } = update;
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        updateQR(qr);
+        console.log("[WhatsApp] QR code gerado — escaneie pelo painel web ou terminal");
+      }
 
       if (connection === "close") {
+        updateStatus("disconnected");
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
@@ -37,6 +44,7 @@ export async function startWhatsApp(onMessage: MessageHandler): Promise<void> {
           );
         }
       } else if (connection === "open") {
+        updateStatus("connected");
         console.log("[WhatsApp] Conectado!");
       }
     });
