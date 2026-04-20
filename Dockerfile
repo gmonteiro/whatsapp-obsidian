@@ -13,12 +13,13 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
+# Install all deps (including devDeps for tsc), build, then prune
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 
 COPY tsconfig.json ./
 COPY src/ ./src/
-RUN npx tsc
+RUN npx tsc && npm prune --omit=dev
 
 # Auth and vault will be mounted as volumes
 RUN mkdir -p /data/auth /data/vault
