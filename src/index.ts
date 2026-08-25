@@ -3,7 +3,11 @@ import { extractUrls } from "./url-extractor.js";
 import { scrape } from "./scraper.js";
 import { summarize } from "./summarizer.js";
 import { writeLinkNote, writeQuickNote, setupVault } from "./obsidian-writer.js";
-import { startWebServer, updateLastMessage } from "./web.js";
+import { onZapiWebhook, startWebServer, updateLastMessage } from "./web.js";
+import { crmConfig, crmEnabled, crmMissingVars } from "./config.js";
+import { forwardWebhook } from "./zapi.js";
+import type { ZapiWebhook } from "./zapi.js";
+import { handleZapiMessage, shouldHandle } from "./crm.js";
 
 // Parse optional folder prefix from message
 // Format: "FolderA/SubFolder https://link.com" or "FolderA/SubFolder some note text"
@@ -73,9 +77,40 @@ async function handleMessage(text: string): Promise<void> {
 const port = parseInt(process.env.PORT || "3000", 10);
 
 console.log("[WhatsApp-Obsidian] Iniciando...");
+
+// Captura de CRM: áudio no chip da Z-API vira card no Pipefy.
+onZapiWebhook((body) => {
+  // O chip também atende o projeto do Zona Sul, e a Z-API só aceita um webhook
+  // de recebimento por instância — o repasse mantém o outro projeto vivo.
+  forwardWebhook(body);
+
+  const payload = body as ZapiWebhook;
+  if (!shouldHandle(payload)) return;
+  void handleZapiMessage(payload);
+});
+
+if (crmEnabled()) {
+  console.log(`[CRM] Ativo — pipe ${crmConfig.pipefy.pipeId}`);
+} else {
+  console.log(
+    `[CRM] Desligado. Faltam variáveis: ${crmMissingVars().join(", ")}`
+  );
+}
+
 startWebServer(port);
+
+// O painel e o webhook precisam subir mesmo sem sessão do WhatsApp Web —
+// a captura do Obsidian é um pipeline separado do CRM.
+const whatsappWebEnabled = process.env.ENABLE_WHATSAPP_WEB !== "false";
+
 setupVault()
-  .then(() => startWhatsApp(handleMessage))
+  .then(() => {
+    if (!whatsappWebEnabled) {
+      console.log("[WhatsApp] whatsapp-web.js desligado (ENABLE_WHATSAPP_WEB=false)");
+      return;
+    }
+    return startWhatsApp(handleMessage);
+  })
   .catch((err) => {
     console.error("[WhatsApp-Obsidian] Erro fatal:", err);
     process.exit(1);

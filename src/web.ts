@@ -85,8 +85,64 @@ async function renderPage(): Promise<string> {
 </html>`;
 }
 
+type WebhookHandler = (body: unknown) => void;
+
+let webhookHandler: WebhookHandler | null = null;
+
+/**
+ * Registrada pelo index.ts. Fica aqui em vez de o servidor importar o pipeline
+ * de CRM direto, senão web.ts e crm.ts viram um ciclo de imports.
+ */
+export function onZapiWebhook(handler: WebhookHandler): void {
+  webhookHandler = handler;
+}
+
+const MAX_BODY_BYTES = 1024 * 1024;
+
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(new Error("Corpo do webhook grande demais"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    req.on("error", reject);
+  });
+}
+
 export function startWebServer(port: number): void {
-  const server = http.createServer(async (_req, res) => {
+  const server = http.createServer(async (req, res) => {
+    if (req.method === "POST" && (req.url || "").startsWith("/webhook/zapi")) {
+      let body: unknown = null;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch (err) {
+        console.error("[Webhook] Corpo inválido:", err);
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false }));
+        return;
+      }
+
+      // Responder na hora: a Z-API reentrega o callback se o 200 demorar, e
+      // transcrever + criar card leva mais tempo que a janela dela.
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+
+      try {
+        webhookHandler?.(body);
+      } catch (err) {
+        console.error("[Webhook] Handler falhou:", err);
+      }
+      return;
+    }
+
     const html = await renderPage();
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(html);
@@ -94,5 +150,6 @@ export function startWebServer(port: number): void {
 
   server.listen(port, () => {
     console.log(`[Web] Painel disponível em http://localhost:${port}`);
+    console.log(`[Web] Webhook da Z-API em POST /webhook/zapi`);
   });
 }

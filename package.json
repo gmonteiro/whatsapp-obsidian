@@ -1,16 +1,17 @@
 {
   "name": "whatsapp-obsidian",
   "version": "1.0.0",
-  "description": "WhatsApp to Obsidian link capture pipeline with AI summaries",
+  "description": "WhatsApp to Obsidian link capture + audio-to-Pipefy CRM cards",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "check:routing": "tsx src/crm-routing-check.ts"
   },
   "type": "module",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
+    "@anthropic-ai/sdk": "^0.120.0",
     "@mozilla/readability": "^0.5.0",
     "dotenv": "^16.4.7",
     "jsdom": "^25.0.1",
